@@ -271,6 +271,25 @@ pub mod test {
     }
 
     #[test]
+    fn test_validate_password_strength() {
+        // Too short
+        assert!(validate_password_strength("short").is_err());
+        assert!(validate_password_strength("1234567").is_err()); // exactly 7 chars
+
+        // Minimum valid length
+        assert!(validate_password_strength("12345678").is_ok()); // exactly 8 chars
+
+        // Normal valid password
+        assert!(validate_password_strength("my-secure-password!").is_ok());
+
+        // Too long (over 128 chars)
+        assert!(validate_password_strength(&"a".repeat(129)).is_err());
+
+        // Max valid length
+        assert!(validate_password_strength(&"a".repeat(128)).is_ok());
+    }
+
+    #[test]
     fn test_hash_password() {
         assert!(hash_password("foobar", 1000).is_ok());
     }

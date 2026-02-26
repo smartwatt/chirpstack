@@ -12,9 +12,10 @@ use crate::storage::user;
 /// # Arguments
 ///
 /// * `email` - User email address (unique identifier)
-/// * `password_file` - Path to file containing the new password (use "-" for stdin, omit for interactive prompt)
-pub async fn run(email: &str, password_file: &Option<String>) -> Result<()> {
-    let password = get_password(password_file).context("Failed to get password")?;
+/// * `password_file` - Path to file containing the new password
+/// * `stdin` - Read password from stdin
+pub async fn run(email: &str, password_file: &Option<String>, stdin: bool) -> Result<()> {
+    let password = get_password(password_file, stdin).context("Failed to get password")?;
 
     // Validate password strength (NIST 800-63b guidelines)
     user::validate_password_strength(&password)?;
@@ -34,14 +35,14 @@ pub async fn run(email: &str, password_file: &Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn get_password(password_file: &Option<String>) -> Result<String> {
-    // File input (including stdin with "-")
+fn get_password(password_file: &Option<String>, stdin: bool) -> Result<String> {
+    if stdin {
+        let input = rpassword::read_password_from_bufread(&mut std::io::stdin().lock())
+            .context("Failed to read password from stdin")?;
+        return Ok(input);
+    }
+
     if let Some(path) = password_file {
-        if path == "-" {
-            // Read from stdin when "-" is specified
-            let input = rpassword::read_password().context("Failed to read password from stdin")?;
-            return Ok(input);
-        }
         let pw = std::fs::read_to_string(path.as_str()).context("Failed to read password file")?;
         // Trim only trailing newline/carriage return (common when echo "pass" > file)
         let trimmed = pw.trim_end_matches(&['\n', '\r'][..]);
@@ -57,4 +58,57 @@ fn get_password(password_file: &Option<String>) -> Result<String> {
     }
 
     Ok(password)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    fn write_temp_file(contents: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "chirpstack_test_pw_{}.txt",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        ));
+        let mut f = fs::File::create(&path).unwrap();
+        f.write_all(contents.as_bytes()).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_get_password_from_file() {
+        let path = write_temp_file("secretpassword\n");
+        let pw = get_password(&Some(path.to_str().unwrap().to_string()), false).unwrap();
+        fs::remove_file(&path).ok();
+        assert_eq!(pw, "secretpassword");
+    }
+
+    #[test]
+    fn test_get_password_from_file_no_trailing_newline() {
+        let path = write_temp_file("secretpassword");
+        let pw = get_password(&Some(path.to_str().unwrap().to_string()), false).unwrap();
+        fs::remove_file(&path).ok();
+        assert_eq!(pw, "secretpassword");
+    }
+
+    #[test]
+    fn test_get_password_from_file_crlf() {
+        let path = write_temp_file("secretpassword\r\n");
+        let pw = get_password(&Some(path.to_str().unwrap().to_string()), false).unwrap();
+        fs::remove_file(&path).ok();
+        assert_eq!(pw, "secretpassword");
+    }
+
+    #[test]
+    fn test_get_password_file_not_found() {
+        let result = get_password(
+            &Some("/nonexistent/path/to/password.txt".to_string()),
+            false,
+        );
+        assert!(result.is_err());
+    }
 }
